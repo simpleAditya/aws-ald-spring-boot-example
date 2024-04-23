@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: API Gateway, Lambda and Dynamodb integration
+Resources:
+  NagarroLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: Take code from S3 and perform actions in Dynamodb
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaDynamoDBExecutionRole
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      RoleName: LambdaExecutionRole
+  NagarroLambdaFunction:
+    DependsOn: NagarroLambdaExecutionRole
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: com.ecommerce.product.handler.LambdaHandler::handleRequest
+      Role: !GetAtt NagarroLambdaExecutionRole.Arn
+      Code:
+        S3Bucket: nagarrobucketaditya
+        S3Key: product-0.0.1-SNAPSHOT-all.jar
+      Runtime: java17
+      Description: Lambda function execution via API Gateway
+      Timeout: 60
+      TracingConfig:
+        Mode: Active
+  NagarroDynamoDBTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: Product
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: '5'
+        WriteCapacityUnits: '5'
+  NagarroAPIGatewayRestAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: ProductRestAPI
+  NagarroAPIGatewayRootResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt NagarroAPIGatewayRestAPI.RootResourceId
+      PathPart: product
+      RestApiId: !Ref NagarroAPIGatewayRestAPI
+  NagarroAPIGatewayRootMethodPOST:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NagarroAPIGatewayRestAPI
+      ResourceId: !Ref NagarroAPIGatewayRootResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      MethodResponses:
+        - StatusCode: '201'
+      Integration:
+        Type: AWS_PROXY
+        IntegrationResponses:
+          - StatusCode: '201'
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:ap-south-1:lambda:path/2015-03-31/functions/${NagarroLambdaFunction.Arn}/invocations'
+  NagarroAPIGatewayRootMethodGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NagarroAPIGatewayRestAPI
+      ResourceId: !Ref NagarroAPIGatewayRootResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      MethodResponses:
+        - StatusCode: '200'
+      Integration:
+        Type: AWS_PROXY
+        IntegrationResponses:
+          - StatusCode: '200'
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:ap-south-1:lambda:path/2015-03-31/functions/${NagarroLambdaFunction.Arn}/invocations'
+  NagarroAPIGatewayChildResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !Ref NagarroAPIGatewayRootResource
+      PathPart: '{id}'
+      RestApiId: !Ref NagarroAPIGatewayRestAPI
+  NagarroAPIGatewayChildMethodGET:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NagarroAPIGatewayRestAPI
+      ResourceId: !Ref NagarroAPIGatewayChildResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      RequestParameters:
+        method.request.path.id: true
+      MethodResponses:
+        - StatusCode: '200'
+      Integration:
+        Type: AWS_PROXY
+        IntegrationResponses:
+          - StatusCode: '200'
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:ap-south-1:lambda:path/2015-03-31/functions/${NagarroLambdaFunction.Arn}/invocations'
+        RequestParameters:
+          integration.request.path.id: method.request.path.id
+  NagarroAPIGatewayDeployment:
+    DependsOn:
+      - NagarroAPIGatewayRootMethodPOST
+      - NagarroAPIGatewayRootMethodGET
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      Description: API Gateway REST API Deployment
+      RestApiId: !Ref NagarroAPIGatewayRestAPI
+      StageName: DEV
+  NagarroAPIGatewayLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NagarroLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceAccount: 123456789
+      SourceArn: !Join
+        - ""
+        - - "arn:"
+          - !Ref "AWS::Partition"
+          - ":execute-api:"
+          - !Ref "AWS::Region"
+          - ":"
+          - !Ref "AWS::AccountId"
+          - ":"
+          - !Ref NagarroAPIGatewayRestAPI
+          - /*/*
