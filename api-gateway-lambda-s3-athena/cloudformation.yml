@@ -1,0 +1,130 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: API Gateway, Lambda, S3 and Athena integration
+Resources:
+  NagarroLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: Take code from S3 and perform actions in Athena
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonS3ObjectLambdaExecutionRolePolicy
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+      RoleName: LambdaExecutionRole
+  NagarroLambdaFunction:
+    DependsOn: NagarroLambdaExecutionRole
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: com.ecommerce.product.handler.LambdaHandler::handleRequest
+      Role: !GetAtt NagarroLambdaExecutionRole.Arn
+      Code:
+        S3Bucket: nagarrobucketaditya
+        S3Key: api-gateway-lambda-s3-athena-0.0.1-SNAPSHOT-all.jar
+      Runtime: java17
+      Description: Lambda function execution via API Gateway
+      Timeout: 60
+      TracingConfig:
+        Mode: Active
+  NagarroAPIGatewayRestAPI:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: ProductRestAPI
+  NagarroAPIGatewayResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !GetAtt NagarroAPIGatewayRestAPI.RootResourceId
+      PathPart: '{proxy+}'
+      RestApiId: !Ref NagarroAPIGatewayRestAPI
+  NagarroAPIGatewayMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref NagarroAPIGatewayRestAPI
+      ResourceId: !Ref NagarroAPIGatewayResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      MethodResponses:
+        - StatusCode: '200'
+      Integration:
+        Type: AWS_PROXY
+        IntegrationResponses:
+          - StatusCode: '200'
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:ap-south-1:lambda:path/2015-03-31/functions/${NagarroLambdaFunction.Arn}/invocations'
+  NagarroAPIGatewayDeployment:
+    DependsOn:
+      - NagarroAPIGatewayMethod
+    Type: AWS::ApiGateway::Deployment
+    Properties:
+      Description: API Gateway REST API Deployment
+      RestApiId: !Ref NagarroAPIGatewayRestAPI
+      StageName: DEV
+  NagarroAPIGatewayLambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NagarroLambdaFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceAccount: 123456789
+      SourceArn: !Join
+        - ""
+        - - "arn:"
+          - !Ref "AWS::Partition"
+          - ":execute-api:"
+          - !Ref "AWS::Region"
+          - ":"
+          - !Ref "AWS::AccountId"
+          - ":"
+          - !Ref NagarroAPIGatewayRestAPI
+          - /*/*
+  NagarroAthenaCreateDatabase:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Database: "product"
+      Description: "A query that creates a database"
+      Name: "ProductDatabase"
+      QueryString: >
+        create database product
+  NagarroAthenaCreateTable:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Database: "product"
+      Description: "A query that creates a table"
+      Name: "ProductTable"
+      QueryString: >
+        CREATE EXTERNAL TABLE IF NOT EXISTS `product`.`product_logs` (
+          `id` string,
+          `name` string,
+          `description` string,
+          `price` double,
+          `currency` string,
+          `type` string,
+          `createdAt` string,
+          `updatedAt` string,
+          `status` string,
+          `errorMessage` string
+        )
+        ROW FORMAT SERDE 'org.openx.data.jsonserde.JsonSerDe'
+        WITH SERDEPROPERTIES (
+          'ignore.malformed.json' = 'FALSE',
+          'dots.in.keys' = 'FALSE',
+          'case.insensitive' = 'TRUE',
+          'mapping' = 'TRUE'
+        )
+        STORED AS INPUTFORMAT 'org.apache.hadoop.mapred.TextInputFormat' OUTPUTFORMAT 'org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat'
+        LOCATION 's3://product-amway-aditya/'
+        TBLPROPERTIES ('classification' = 'json');
+  NagarroAthenaSelectQuery:
+    Type: AWS::Athena::NamedQuery
+    Properties:
+      Database: "product"
+      Description: "A query that interacts with table"
+      Name: "ProductQuery"
+      QueryString: >
+        select * from product_logs
