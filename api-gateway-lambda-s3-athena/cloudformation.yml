@@ -83,6 +83,101 @@ Resources:
           - ":"
           - !Ref NagarroAPIGatewayRestAPI
           - /*/*
+  NagarroCloudfrontCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        DefaultTTL: 300
+        MaxTTL: 31536000
+        MinTTL: 60
+        Name: NagarroCloudfrontCachePolicy
+        ParametersInCacheKeyAndForwardedToOrigin:
+          CookiesConfig:
+            CookieBehavior: none
+          EnableAcceptEncodingBrotli: true
+          EnableAcceptEncodingGzip: true
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers:
+              - None
+          QueryStringsConfig:
+            QueryStringBehavior: none
+  NagarroCloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Origins:
+          - Id: NagarroAPIOrigin
+            DomainName: !Sub '${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com'
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+        DefaultCacheBehavior:
+          TargetOriginId: NagarroAPIOrigin
+          CachePolicyId: !Ref NagarroCloudfrontCachePolicy
+          ViewerProtocolPolicy: https-only
+        CacheBehaviors:
+          - PathPattern: /dev/*
+            TargetOriginId: NagarroAPIOrigin
+            CachePolicyId: !Ref NagarroCloudfrontCachePolicy
+            ViewerProtocolPolicy: https-only
+  NagarroAthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: NagarroAthenaWorkGroup
+      State: ENABLED
+      WorkGroupConfiguration:
+        BytesScannedCutoffPerQuery: 200000000
+        EnforceWorkGroupConfiguration: false
+        PublishCloudWatchMetricsEnabled: false
+        RequesterPaysEnabled: true
+        ResultConfiguration:
+          OutputLocation: s3://nagarrobucketadityaathena/
+  NagarroGlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref 'AWS::AccountId'
+      DatabaseInput:
+        Description: Glue table for Athena
+        Name: product
+  NagarroGlueTable:
+    Type: AWS::Glue::Table
+    Properties:
+      CatalogId: !Ref 'AWS::AccountId'
+      DatabaseName: !Ref NagarroGlueDatabase
+      TableInput:
+        Description: Product data attribute logs
+        Name: product_logs
+        Owner: aditya
+        StorageDescriptor:
+          Columns:
+            - Name: id
+              Type: String
+            - Name: name
+              Type: string
+            - Name: description
+              Type: string
+            - Name: price
+              Type: double
+            - Name: currency
+              Type: string
+            - Name: type
+              Type: string
+            - Name: createdAt
+              Type: string
+            - Name: updatedAt
+              Type: string
+            - Name: status
+              Type: string
+            - Name: errorMessage
+              Type: string
+          Compressed: False
+          Location: s3://nagarrobucketaditya/
+          InputFormat: org.apache.hadoop.mapred.TextInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.HiveIgnoreKeyTextOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.openx.data.jsonserde.JsonSerDe
+        TableType: EXTERNAL_TABLE
   NagarroAthenaCreateDatabase:
     Type: AWS::Athena::NamedQuery
     Properties:
