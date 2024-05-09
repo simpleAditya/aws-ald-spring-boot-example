@@ -92,7 +92,7 @@ Event-based architecture.
 
 S3 -> SNS -> SQS -> Lambda -> DynamoDb
 
-1. Create S3 bucket.
+1. Create S3 bucket and upload sns-sqs-lambda/product.json.
 2. Create SNS topic with custom access policy.
 3. Create SQS queue with custom access policy.
 4. Create Lambda with custom access policy. (Change handler path - com.ecommerce.product.handler.LambdaHandler::handleRequest)
