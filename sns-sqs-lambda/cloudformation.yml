@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: S3, SNS, SQS and Lambda integration
+Resources:
+  NagarroLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      Description: Put code into S3 so that SNS will get triggered and call SQS
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonS3ObjectLambdaExecutionRolePolicy
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonSQSFullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      RoleName: LambdaExecutionRole
+  NagarroLambdaFunction:
+    DependsOn: NagarroLambdaExecutionRole
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: com.ecommerce.product.handler.LambdaHandler::handleRequest
+      Role: !GetAtt NagarroLambdaExecutionRole.Arn
+      Code:
+        S3Bucket: nagarrobucketaditya
+        S3Key: sns-sqs-lambda-0.0.1-SNAPSHOT-all.jar
+      Runtime: java17
+      Description: Lambda function execution via SQS
+      Timeout: 120
+      TracingConfig:
+        Mode: Active
+  NagarroS3Bucket:
+    Type: 'AWS::S3::Bucket'
+    Properties:
+      AccessControl: BucketOwnerFullControl
+      NotificationConfiguration:
+        TopicConfigurations:
+          - Topic: !Ref NagarroSNSTopic
+            Event: 's3:ObjectCreated:Put'
+  NagarroSNSTopic:
+    Type: AWS::SNS::Topic
+    DependsOn:
+      - NagarroQueue1
+      - NagarroQueue2
+    Properties:
+      Subscription:
+        - Endpoint:
+            Fn::GetAtt:
+              - NagarroQueue1
+              - Arn
+          Protocol: sqs
+        - Endpoint:
+            Fn::GetAtt:
+              - NagarroQueue2
+              - Arn
+          Protocol: sqs
+      TopicName: NagarroSNSTopic
+  NagarroTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Sid: AllowServices
+            Effect: Allow
+            Principal:
+              Service:
+                - s3.amazonaws.com
+            Action: 'sns:Publish'
+            Resource:
+              - !Ref NagarroSNSTopic
+            Condition:
+              StringEquals:
+                SourceAccount: "123456789"
+              ArnLike:
+                aws:SourceArn: !Join
+                  - ""
+                  - - "arn:aws:s3:::"
+                    - !Ref NagarroS3Bucket
+          - Sid: AllowAWS
+            Effect: Allow
+            Principal:
+              Service:
+                - sqs.amazonaws.com
+            Action: 'sns:Subscribe'
+            Resource:
+              - !Ref NagarroSNSTopic
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt NagarroQueue2.Arn
+      Topics:
+        - !Ref NagarroSNSTopic
+  NagarroQueue1:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: NagarroQueue1
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt
+          - NagarroQueueDLQ
+          - Arn
+        maxReceiveCount: 2
+  NagarroQueueDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: NagarroQueueDLQ
+  NagarroQueue2:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: NagarroQueue2
+      DelaySeconds: 0
+      VisibilityTimeout: 120
+  NagarroQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    DependsOn:
+      - NagarroSNSTopic
+    Properties:
+      PolicyDocument:
+        Statement:
+          - Sid: AllowLambda
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sqs:ReceiveMessage
+              - sqs:SendMessage
+            Resource:
+              - !GetAtt NagarroQueue2.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt NagarroLambdaFunction.Arn
+          - Sid: AllowSQS
+            Effect: Allow
+            Principal:
+              AWS: "*"
+            Action:
+              - sqs:SendMessage
+            Resource:
+              - !GetAtt NagarroQueue2.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Join
+                  - ""
+                  - - "arn:aws:sns:ap-south-1:123456789:NagarroSNSTopic"
+      Queues:
+        - Ref: NagarroQueue1
+        - Ref: NagarroQueue2
+  NagarroSQSTrigger:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      BatchSize: 10
+      Enabled: true
+      EventSourceArn: !GetAtt NagarroQueue2.Arn
+      FunctionName: !GetAtt NagarroLambdaFunction.Arn
+  NagarroDynamoDBTable:
+    Type: 'AWS::DynamoDB::Table'
+    Properties:
+      TableName: Product
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: '5'
+        WriteCapacityUnits: '5'
