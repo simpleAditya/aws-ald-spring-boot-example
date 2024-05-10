@@ -15,7 +15,7 @@ sudo ./install auto
 sudo yum install -y python-pip
 sudo pip install awscli
 
-IAM Roles (EC2)
+IAM Roles (EC2 Instance rule)
 
 AmazonEC2RoleforAWSCodeDeploy
 AmazonS3FullAccess
