@@ -1,0 +1,19 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      java: corretto17
+  build:
+    commands:
+      - echo Aditya We have entered the build phase !
+      - gradle build
+  post_build:
+    commands:
+      - echo Aditya We have successfully built the project !
+artifacts:
+  files:
+    - build/libs/aws-ci-cd-pipeline-0.0.1-SNAPSHOT.jar
+    - scripts/*.sh
+    - appspec.yml
+  discard-paths: yes
